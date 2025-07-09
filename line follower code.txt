@@ -1,0 +1,129 @@
+#include <Arduino.h>
+
+#include <QTRSensors.h>
+
+// Define sensor and motor pins
+const int sensorPins[] = {A0, A1, A2, A3, A4, A5, A6, A7};  // Analog pins for the RLS-08 sensor
+const int leftMotor1 = 2;  // PWM pin for left motor speed control
+const int leftMotor2 = 3;  // PWM pin for left motor direction control
+const int leftMotorDir = 9;  // Direction pin for left motor
+const int rightMotor1 = 4;  // PWM pin for right motor speed control
+const int rightMotor2 = 5;  // PWM pin for right motor direction control
+const int rightMotorDir = 10;  // Direction pin for right motor
+
+int sensorValues[8];  // Adjusted array size to store the sensor readings
+int threshold = 500;  // Line detection threshold (adjust for surface and lighting)
+
+// PID Variables
+float Kp = 1.0;  // Proportional gain
+float Ki = 0.0;  // Integral gain
+float Kd = 0.0;  // Derivative gain
+
+float error = 0, previousError = 0;
+float integral = 0;
+float derivative = 0;
+float correction = 0;
+float baseSpeed = 150;  // Base speed for motors
+float maxSpeed = 255;   // Maximum motor speed
+
+void setup() {
+  Serial.begin(9600);
+
+  // Set up motor control pins
+  pinMode(leftMotor1, OUTPUT);
+  pinMode(leftMotor2, OUTPUT);
+  pinMode(leftMotorDir, OUTPUT);
+  pinMode(rightMotor1, OUTPUT);
+  pinMode(rightMotor2, OUTPUT);
+  pinMode(rightMotorDir, OUTPUT);
+
+  // Set up sensor pins
+  for (int i = 0; i < 8; i++) {
+    pinMode(sensorPins[i], INPUT);
+  }
+}
+
+void loop() {
+  // Read sensor values
+  for (int i = 0; i < 8; i++) {
+    sensorValues[i] = analogRead(sensorPins[i]);
+  }
+
+  // Calculate the error based on sensor readings
+  error = calculateError();
+
+  // Apply PID control
+  correction = pidControl(error);
+
+  // Adjust motor speeds based on the PID correction
+  adjustMotorSpeeds(correction);
+}
+
+// Calculate error based on the sensor readings
+float calculateError() {
+  int weightedSum = 0;
+  int sum = 0;
+  int sensorWeight[8] = {-4, -3, -2, -1, 1, 2, 3, 4};  // Weights to determine how far from center the line is
+
+  // Calculate weighted sum of sensor values
+  for (int i = 0; i < 8; i++) {
+    if (sensorValues[i] > threshold) {  // Line detected
+      weightedSum += sensorWeight[i];
+      sum++;
+    }
+  }
+
+  if (sum == 0) {
+    // No line detected, return previous error (or stop the robot)
+    return previousError;
+  }
+
+  return (float)weightedSum / sum;  // Average position of the line
+}
+
+// PID control to calculate correction
+float pidControl(float error) {
+  // Proportional term
+  float P = Kp * error;
+
+  // Integral term
+  integral += error;
+  float I = Ki * integral;
+
+  // Derivative term
+  derivative = error - previousError;
+  float D = Kd * derivative;
+
+  // Calculate total correction
+  float correction = P + I + D;
+
+  // Update previous error for the next cycle
+  previousError = error;
+
+  return correction;
+}
+
+// Adjust motor speeds based on correction
+void adjustMotorSpeeds(float correction) {
+  int leftSpeed = baseSpeed - correction;
+  int rightSpeed = baseSpeed + correction;
+
+  // Constrain speeds to valid range
+  leftSpeed = constrain(leftSpeed, 0, maxSpeed);
+  rightSpeed = constrain(rightSpeed, 0, maxSpeed);
+
+  // Set motor directions based on the correction
+  if (correction < 0) {
+    digitalWrite(leftMotorDir, HIGH);  // Move left motor forward
+    digitalWrite(rightMotorDir, LOW);  // Move right motor backward
+  } else {
+    digitalWrite(leftMotorDir, LOW);  // Move left motor backward
+    digitalWrite(rightMotorDir, HIGH);  // Move right motor forward
+  }
+
+  // Set motor speeds using PWM
+  analogWrite(leftMotor1, leftSpeed);
+  analogWrite(rightMotor1, rightSpeed);
+  digitalWrite(leftMotor2, LOW);  // Set motor 2 low as only motor1 handles PWM
+  digitalWrite(rightMotor2, LOW);  // Set motor 2 low as only motor1 handles PWM
+}
